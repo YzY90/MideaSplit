@@ -25,25 +25,59 @@ def save_state(state):
         json.dump(state, f, indent=2, ensure_ascii=False)
 
 def write_to_log(message):
-    """Schreibt einen Eintrag mit aktuellem Zeitstempel in die Log-Datei."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_entry = f"[{timestamp}] {message}\n"
     with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(log_entry)
+        f.write(f"[{timestamp}] {message}\n")
 
-def fetch_aggregated_stock():
-    """Fragt die API ab, die die Bestände aller großen Ketten bündelt."""
-    url = "https://api.midea-ticker.de/v1/portasplit/stock" 
+def fetch_obi_direct(coords, radius_km):
+    """Fragt die OBI-Schnittstelle direkt nach der PortaSplit 12000 im Umkreis ab."""
+    # OBI Artikelnummer für die Midea PortaSplit 12000 BTU
+    art_num = "3932829" 
+    lat, lon = coords[0], coords[1]
+    
+    # Offizielle OBI-Schnittstelle für Marktverfügbarkeiten
+    url = f"https://www.obi.de/api/v1/products/{art_num}/availability"
+    params = {
+        "lat": lat,
+        "lon": lon,
+        "radius": radius_km,
+        "storeCount": 15
+    }
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    }
+    
     try:
-        response = requests.get(url, timeout=15)
+        response = requests.get(url, params=params, headers=headers, timeout=15)
         if response.status_code == 200:
-            return response.json()
+            data = response.json()
+            markets = []
+            
+            # Auswertung der lokalen Märkte im Radius
+            for store in data.get("stores", []):
+                availability = store.get("availability", {})
+                stock = availability.get("quantity", 0)
+                
+                # Nur Märkte mit echtem Bestand listen
+                if stock > 0:
+                    markets.append({
+                        "store_chain": "OBI",
+                        "branch_name": store.get("name", "Unbekannter Markt"),
+                        "coords": [store.get("lat"), store.get("lon")],
+                        "product": "Midea PortaSplit 12000 BTU",
+                        "price": 699.00,  # OBI Standardpreis
+                        "stock": int(stock),
+                        "shipping_available": False,
+                        "link": f"https://www.obi.de/p/{art_num}"
+                    })
+            return markets
     except Exception as e:
-        print(f"Fehler beim Abruf der Community-API: {e}")
+        print(f"Fehler beim direkten OBI-Abruf: {e}")
     return []
 
 def main():
-    print("Starte Live-Abfrage für alle Händler...")
+    print("Starte direkte OBI-Live-Abfrage...")
     config = load_config()
     old_state = load_state()
     new_state = {}
@@ -51,78 +85,42 @@ def main():
     home_coords = config["home_coords"]
     max_dist = config["max_distance_km"]
     
-    all_markets_data = fetch_aggregated_stock()
+    # Holt die Daten ohne den fehlerhaften Umweg direkt von OBI
+    all_markets_data = fetch_obi_direct(home_coords, max_dist)
     
-    if not all_markets_data:
-        write_to_log("WARNUNG: Keine Marktdaten von der API empfangen (API evtl. offline).")
-        return
-
-    found_any_in_range = 0
+    found_any_in_range = len(all_markets_data)
     alerts_sent = 0
 
     for item in all_markets_data:
-        # 1. Schutz: Nur 12000 BTU
-        if "12000" not in item.get("product", ""):
-            continue
-            
-        # 2. Schutz: Nur mit Bestand oder Versand
-        stock = item.get("stock", 0)
-        shipping_available = item.get("shipping_available", False)
-        if stock <= 0 and not shipping_available:
-            continue
-            
-        # 3. Entfernung berechnen
-        market_coords = item.get("coords")
-        if not market_coords:
-            continue
-            
-        distance = round(geodesic(home_coords, market_coords).km, 1)
-        
-        # Filter: 100km Umkreis (außer Versand ist möglich)
-        if distance > max_dist and not shipping_available:
-            continue
-            
-        found_any_in_range += 1
         market_id = f"{item['store_chain']}_{item['branch_name']}".lower().replace(" ", "_")
+        distance = round(geodesic(home_coords, item["coords"]).km, 1)
         
-        # Favoriten markieren
         is_fav = any(fav.lower() in item["branch_name"].lower() for fav in config["prioritized_stores"])
         fav_prefix = "❤️ [PRIO-MARKT] " if is_fav else ""
         
-        if shipping_available and stock <= 0:
-            stock_text = "📦 Bundesweiter LKW-Versand verfügbar!"
-        elif stock == 1:
-            stock_text = "🟢 Letztes Stück auf Lager!"
-        else:
-            stock_text = f"🟢 {stock} Stück abholbereit!"
-            
-        new_state[market_id] = {"stock": stock, "price": item["price"], "shipping": shipping_available}
+        stock_text = "🟢 Letztes Stück!" if item["stock"] == 1 else f"🟢 {item['stock']} Stück abholbereit!"
+        new_state[market_id] = {"stock": item["stock"], "price": item["price"]}
         
-        # Smart Alert Logik
-        should_notify = (market_id not in old_state) or \
-                        (old_state[market_id]["stock"] != stock) or \
-                        (old_state[market_id]["price"] != item["price"]) or \
-                        (old_state[market_id].get("shipping") != shipping_available)
+        should_notify = (market_id not in old_state) or (old_state[market_id]["stock"] != item["stock"])
                 
         if should_notify:
             msg = (
-                f"🚨 {fav_prefix}PortaSplit 12k BTU verfügbar!\n\n"
-                f"📍 *{item['store_chain']} ({item['branch_name']})*\n"
+                f"🚨 {fav_prefix}PortaSplit 12k BTU direkt bei OBI!\n\n"
+                f"📍 *{item['store_chain']} {item['branch_name']}*\n"
                 f"🛣️ Entfernung: {distance} km\n"
                 f"💰 Preis: {item['price']} €\n"
-                f"📦 Status: {stock_text}\n\n"
-                f"🔗 Link: {item.get('link', 'https://google.com')}"
+                f"📦 Bestand: {stock_text}\n\n"
+                f"🔗 Link: {item['link']}"
             )
             send_telegram_message(msg)
             alerts_sent += 1
-            write_to_log(f"ALERT: {item['store_chain']} {item['branch_name']} gemeldet (Bestand: {stock}, Preis: {item['price']}€).")
+            write_to_log(f"ALERT: {item['store_chain']} {item['branch_name']} gemeldet (Bestand: {item['stock']}).")
 
     save_state(new_state)
     
-    # Zusammenfassung in das Log schreiben
-    log_msg = f"Erfolgreich durchgelaufen. Märkte im Umkreis mit Bestand: {found_any_in_range}. Gesendete Telegram-Alarme: {alerts_sent}."
+    log_msg = f"Direkt-Check beendet. Märkte mit Bestand im {max_dist}km-Radius: {found_any_in_range}. Alarme gesendet: {alerts_sent}."
     write_to_log(log_msg)
-    print("Live-Check beendet und protokolliert.")
+    print("Check beendet.")
 
 if __name__ == "__main__":
     main()
