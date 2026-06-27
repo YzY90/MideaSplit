@@ -1,0 +1,43 @@
+name: PortaSplit Stock Monitor
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check-stock:
+    runs-on: ubuntu-latest
+
+    # Erlaubt dem Bot, die search_state.json zurück in dein Repo zu schreiben
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests geopy
+
+    - name: Run Monitor
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      run: |
+        cd portasplit-alert
+        python monitor.py
+
+    - name: Save Search State
+      run: |
+        git config --global user.name "GitHub Action Bot"
+        git config --global user.email "actions@github.com"
+        git add portasplit-alert/search_state.json || true
+        git commit -m "Update stock search state [skip ci]" || true
+        git push || true
