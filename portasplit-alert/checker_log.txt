@@ -1,0 +1,1 @@
+[2026-06-27 23:12:25] WARNUNG: Keine Marktdaten von der API empfangen (API evtl. offline).
