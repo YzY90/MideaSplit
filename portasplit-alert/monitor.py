@@ -29,55 +29,80 @@ def write_to_log(message):
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] {message}\n")
 
-def fetch_obi_direct(coords, radius_km):
-    """Fragt die OBI-Schnittstelle direkt nach der PortaSplit 12000 im Umkreis ab."""
-    # OBI Artikelnummer für die Midea PortaSplit 12000 BTU
-    art_num = "3932829" 
-    lat, lon = coords[0], coords[1]
-    
-    # Offizielle OBI-Schnittstelle für Marktverfügbarkeiten
+# --- DIREKTE HÄNDLER-APIS ---
+
+def fetch_obi(coords, radius_km):
+    """Fragt die offizielle OBI Verfügbarkeits-API ab."""
+    art_num = "3932829"  # Midea PortaSplit 12000 BTU bei OBI
     url = f"https://www.obi.de/api/v1/products/{art_num}/availability"
-    params = {
-        "lat": lat,
-        "lon": lon,
-        "radius": radius_km,
-        "storeCount": 15
-    }
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json"
-    }
+    params = {"lat": coords[0], "lon": coords[1], "radius": radius_km, "storeCount": 20}
+    headers = {"User-Agent": "Mozilla/5.0"}
     
+    markets = []
     try:
-        response = requests.get(url, params=params, headers=headers, timeout=15)
-        if response.status_code == 200:
-            data = response.json()
-            markets = []
-            
-            # Auswertung der lokalen Märkte im Radius
-            for store in data.get("stores", []):
-                availability = store.get("availability", {})
-                stock = availability.get("quantity", 0)
-                
-                # Nur Märkte mit echtem Bestand listen
+        res = requests.get(url, params=params, headers=headers, timeout=10)
+        if res.status_code == 200:
+            for store in res.json().get("stores", []):
+                stock = store.get("availability", {}).get("quantity", 0)
                 if stock > 0:
                     markets.append({
-                        "store_chain": "OBI",
-                        "branch_name": store.get("name", "Unbekannter Markt"),
+                        "chain": "OBI", "name": store.get("name"),
                         "coords": [store.get("lat"), store.get("lon")],
-                        "product": "Midea PortaSplit 12000 BTU",
-                        "price": 699.00,  # OBI Standardpreis
-                        "stock": int(stock),
-                        "shipping_available": False,
+                        "stock": int(stock), "price": 699.00,
                         "link": f"https://www.obi.de/p/{art_num}"
                     })
-            return markets
-    except Exception as e:
-        print(f"Fehler beim direkten OBI-Abruf: {e}")
-    return []
+    except Exception as e: print(f"OBI Fehler: {e}")
+    return markets
+
+def fetch_bauhaus(coords, radius_km):
+    """Fragt die Bauhaus Stock-Schnittstelle ab."""
+    art_num = "31343753"  # ID für PortaSplit 12000 bei Bauhaus
+    url = f"https://www.bauhaus.info/api/v1/products/{art_num}/stock"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    markets = []
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            # Bauhaus liefert oft alle Märkte, wir filtern nach Distanz in main()
+            for store in res.json().get("publicStockEntries", []):
+                stock = store.get("stockInfo", {}).get("quantity", 0)
+                if stock > 0:
+                    markets.append({
+                        "chain": "Bauhaus", "name": store.get("storeName"),
+                        "coords": [store.get("latitude"), store.get("longitude")],
+                        "stock": int(stock), "price": 695.00,
+                        "link": f"https://www.bauhaus.info/p/{art_num}"
+                    })
+    except Exception as e: print(f"Bauhaus Fehler: {e}")
+    return markets
+
+def fetch_hornbach(coords, radius_km):
+    """Fragt die Hornbach Bestands-API ab."""
+    art_num = "10675342"  # Hornbach Artikelnummer für PortaSplit 12k
+    url = f"https://www.hornbach.de/cms/de/de/api/product/{art_num}/availability"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    markets = []
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            for store in res.json().get("storeAvailabilities", []):
+                stock = store.get("lineDisplayAvailability", {}).get("availableQuantity", 0)
+                if stock > 0:
+                    markets.append({
+                        "chain": "Hornbach", "name": store.get("storeName"),
+                        "coords": [store.get("latitude"), store.get("longitude")],
+                        "stock": int(stock), "price": 689.00,
+                        "link": f"https://www.hornbach.de/p/{art_num}"
+                    })
+    except Exception as e: print(f"Hornbach Fehler: {e}")
+    return markets
+
+# --- MAIN ENGINE ---
 
 def main():
-    print("Starte direkte OBI-Live-Abfrage...")
+    print("Starte Multistore-Direktabfrage...")
     config = load_config()
     old_state = load_state()
     new_state = {}
@@ -85,28 +110,40 @@ def main():
     home_coords = config["home_coords"]
     max_dist = config["max_distance_km"]
     
-    # Holt die Daten ohne den fehlerhaften Umweg direkt von OBI
-    all_markets_data = fetch_obi_direct(home_coords, max_dist)
+    # Alle Händler parallel/nacheinander direkt abfragen
+    all_raw_data = []
+    all_raw_data.extend(fetch_obi(home_coords, max_dist))
+    all_raw_data.extend(fetch_bauhaus(home_coords, max_dist))
+    all_raw_data.extend(fetch_hornbach(home_coords, max_dist))
     
-    found_any_in_range = len(all_markets_data)
+    found_in_range = 0
     alerts_sent = 0
-
-    for item in all_markets_data:
-        market_id = f"{item['store_chain']}_{item['branch_name']}".lower().replace(" ", "_")
+    
+    for item in all_raw_data:
         distance = round(geodesic(home_coords, item["coords"]).km, 1)
         
-        is_fav = any(fav.lower() in item["branch_name"].lower() for fav in config["prioritized_stores"])
-        fav_prefix = "❤️ [PRIO-MARKT] " if is_fav else ""
+        # Rigoroser Umkreis-Filter (100km um Frankfurt)
+        if distance > max_dist:
+            continue
+            
+        found_in_range += 1
+        market_id = f"{item['chain']}_{item['name']}".lower().replace(" ", "_")
         
+        is_fav = any(fav.lower() in item["name"].lower() for fav in config["prioritized_stores"])
+        fav_prefix = "❤️ [PRIO-MARKT] " if is_fav else ""
         stock_text = "🟢 Letztes Stück!" if item["stock"] == 1 else f"🟢 {item['stock']} Stück abholbereit!"
+        
         new_state[market_id] = {"stock": item["stock"], "price": item["price"]}
         
-        should_notify = (market_id not in old_state) or (old_state[market_id]["stock"] != item["stock"])
-                
+        # Smart Alert: Nur melden wenn neu oder Bestand/Preis sich geändert hat
+        should_notify = (market_id not in old_state) or \
+                        (old_state[market_id]["stock"] != item["stock"]) or \
+                        (old_state[market_id]["price"] != item["price"])
+                        
         if should_notify:
             msg = (
-                f"🚨 {fav_prefix}PortaSplit 12k BTU direkt bei OBI!\n\n"
-                f"📍 *{item['store_chain']} {item['branch_name']}*\n"
+                f"🚨 {fav_prefix}PortaSplit 12k BTU direkt gefunden!\n\n"
+                f"📍 *{item['chain']} ({item['name']})*\n"
                 f"🛣️ Entfernung: {distance} km\n"
                 f"💰 Preis: {item['price']} €\n"
                 f"📦 Bestand: {stock_text}\n\n"
@@ -114,13 +151,13 @@ def main():
             )
             send_telegram_message(msg)
             alerts_sent += 1
-            write_to_log(f"ALERT: {item['store_chain']} {item['branch_name']} gemeldet (Bestand: {item['stock']}).")
-
+            write_to_log(f"ALERT: {item['chain']} {item['name']} gemeldet (Bestand: {item['stock']}).")
+            
     save_state(new_state)
     
-    log_msg = f"Direkt-Check beendet. Märkte mit Bestand im {max_dist}km-Radius: {found_any_in_range}. Alarme gesendet: {alerts_sent}."
+    log_msg = f"Multistore-Check beendet. Märkte mit Bestand im Radius: {found_in_range}. Alarme gesendet: {alerts_sent}."
     write_to_log(log_msg)
-    print("Check beendet.")
+    print("Check erfolgreich beendet.")
 
 if __name__ == "__main__":
     main()
