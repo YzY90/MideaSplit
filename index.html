@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PortaSplit Bot Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 font-sans min-h-screen flex items-center justify-center p-4">
+
+    <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl w-full max-w-md border border-gray-700">
+        <h1 class="text-2xl font-bold mb-6 text-center text-blue-400 flex items-center justify-center gap-2">
+            🧊 PortaSplit Monitor Setup
+        </h1>
+        
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-400 mb-1">Heimat-Postleitzahl</label>
+                <input type="text" id="zip" value="65929" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500">
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-400 mb-1">Suchradius (km)</label>
+                <div class="flex items-center gap-4">
+                    <input type="range" id="radius" min="10" max="250" value="100" class="w-full accent-blue-500" oninput="radiusVal.innerText = this.value + ' km'">
+                    <span id="radiusVal" class="text-sm font-semibold w-16 text-right">100 km</span>
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-400 mb-1">Favoritenmärkte (Komma-getrennt)</label>
+                <input type="text" id="favs" value="Frankfurt, Wiesbaden, Hanau" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500">
+            </div>
+
+            <div class="pt-2">
+                <label class="block text-sm font-medium text-gray-400 mb-1">GitHub Personal Access Token (PAT)</label>
+                <input type="password" id="pat" placeholder="ghp_..." class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500 text-xs">
+                <p class="text-[10px] text-gray-500 mt-1">Wird nur lokal im Browser genutzt, um die config.json in deinem Repo zu beschreiben.</p>
+            </div>
+
+            <button onclick="saveConfig()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow-lg mt-4">
+                Einstellungen speichern
+            </button>
+            
+            <p id="status" class="text-center text-sm font-medium mt-2 hidden"></p>
+        </div>
+    </div>
+
+    <script>
+        async function saveConfig() {
+            const token = document.getElementById('pat').value;
+            const zip = document.getElementById('zip').value;
+            const radius = parseInt(document.getElementById('radius').value);
+            const favs = document.getElementById('favs').value.split(',').map(s => s.trim());
+            const status = document.getElementById('status');
+
+            if (!token) {
+                status.innerText = "❌ GitHub Token benötigt!";
+                status.className = "text-center text-sm font-medium mt-2 text-red-400";
+                status.classList.remove('hidden');
+                return;
+            }
+
+            status.innerText = "⏳ Speichere in GitHub...";
+            status.className = "text-center text-sm font-medium mt-2 text-yellow-400";
+            status.classList.remove('hidden');
+
+            // Koordinaten-Lookup (vereinfacht für Frankfurt-Region)
+            let coords = [50.1014, 8.5284]; 
+            if(zip !== "65929") {
+                // Fallback/Simulierter Abgleich für andere PLZs, falls gewünscht
+                coords = [50.1109, 8.6821]; 
+            }
+
+            const repoOwner = "YzY90";
+            const repoName = "MideaSplit";
+            const filePath = "portasplit-alert/config.json";
+            const url = `https://api.github.com/repos/${repoOwner}/${repoName}/contents/${filePath}`;
+
+            try {
+                // 1. Hole aktuellen SHA-Wert der Datei
+                const fileRes = await fetch(url, { headers: { "Authorization": `token ${token}` } });
+                const fileData = await fileRes.json();
+                const sha = fileData.sha;
+
+                // 2. Neue Config bauen
+                const newConfig = {
+                    "home_zip": zip,
+                    "home_coords": coords,
+                    "max_distance_km": radius,
+                    "telegram_chat_id": "DEINE_TELEGRAM_CHAT_ID_HIER", // Liest dein Script aus
+                    "search_product": "Midea PortaSplit 12000 BTU",
+                    "prioritized_stores": favs
+                };
+
+                // 3. Datei via GitHub API überschreiben
+                const updateRes = await fetch(url, {
+                    method: "PUT",
+                    headers: {
+                        "Authorization": `token ${token}`,
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        message: "⚙️ Config über Dashboard aktualisiert",
+                        content: btoa(JSON.stringify(newConfig, null, 2)),
+                        sha: sha
+                    })
+                });
+
+                if (updateRes.ok) {
+                    status.innerText = "✅ Erfolgreich auf GitHub gespeichert!";
+                    status.className = "text-center text-sm font-medium mt-2 text-green-400";
+                } else {
+                    status.innerText = "❌ Fehler beim Speichern!";
+                    status.className = "text-center text-sm font-medium mt-2 text-red-400";
+                }
+            } catch (err) {
+                status.innerText = "❌ Verbindung fehlgeschlagen!";
+                status.className = "text-center text-sm font-medium mt-2 text-red-400";
+            }
+        }
+    </script>
+</body>
+</html>
