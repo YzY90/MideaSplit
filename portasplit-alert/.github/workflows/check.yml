@@ -1,0 +1,44 @@
+name: PortaSplit Stock Monitor
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check-stock:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests geopy
+
+    - name: Restore Cache (State JSON)
+      uses: actions/cache/restore@v4
+      with:
+        path: state.json
+        key: stock-state-${{ github.run_id }}
+        restore-keys: |
+          stock-state-
+
+    - name: Run Monitor
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      run: python monitor.py
+
+    - name: Save Cache (State JSON)
+      uses: actions/cache/save@v4
+      if: always()
+      with:
+        path: state.json
+        key: stock-state-${{ github.run_id }}
