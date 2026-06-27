@@ -23,22 +23,17 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests geopy
 
-    - name: Restore Cache (State JSON)
-      uses: actions/cache/restore@v4
-      with:
-        path: state.json
-        key: stock-state-${{ github.run_id }}
-        restore-keys: |
-          stock-state-
-
     - name: Run Monitor
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      run: python monitor.py
+      run: |
+        cd portasplit-alert
+        python monitor.py
 
-    - name: Save Cache (State JSON)
-      uses: actions/cache/save@v4
-      if: always()
-      with:
-        path: state.json
-        key: stock-state-${{ github.run_id }}
+    - name: Save Search State
+      run: |
+        git config --global user.name "GitHub Action Bot"
+        git config --global user.email "actions@github.com"
+        git add portasplit-alert/search_state.json || true
+        git commit -m "Update stock search state [skip ci]" || true
+        git push || true
