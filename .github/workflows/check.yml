@@ -34,10 +34,11 @@ jobs:
         cd portasplit-alert
         python monitor.py
 
-    - name: Save Search State
+    - name: Save Search State and Logs
       run: |
         git config --global user.name "GitHub Action Bot"
         git config --global user.email "actions@github.com"
         git add portasplit-alert/search_state.json || true
-        git commit -m "Update stock search state [skip ci]" || true
+        git add portasplit-alert/checker_log.txt || true
+        git commit -m "Update stock state and logs [skip ci]" || true
         git push || true
