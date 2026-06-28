@@ -2,3 +2,4 @@
 [2026-06-27 23:15:22] Direkt-Check beendet. Märkte mit Bestand im 100km-Radius: 0. Alarme gesendet: 0.
 [2026-06-27 23:20:20] Multistore-Check beendet. Märkte mit Bestand im Radius: 0. Alarme gesendet: 0.
 [2026-06-28 10:08:57] Multistore-Check beendet. Märkte mit Bestand im Radius: 0. Alarme gesendet: 0.
+[2026-06-28 15:07:04] Multistore-Check beendet. Märkte mit Bestand im Radius: 0. Alarme gesendet: 0.
