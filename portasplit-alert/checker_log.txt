@@ -875,3 +875,4 @@
 [2026-08-26 11:42:18] Multistore-Check beendet. Märkte mit Bestand im Radius: 0. Alarme gesendet: 0.
 [2026-08-26 12:17:55] Multistore-Check beendet. Märkte mit Bestand im Radius: 0. Alarme gesendet: 0.
 [2026-08-26 13:30:33] Multistore-Check beendet. Märkte mit Bestand im Radius: 0. Alarme gesendet: 0.
+[2026-08-26 14:21:46] Multistore-Check beendet. Märkte mit Bestand im Radius: 0. Alarme gesendet: 0.
